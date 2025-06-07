@@ -1,8 +1,3 @@
-# Permission DB — Структура та реалізація
-
-Цей документ містить **детальний опис** та пояснення всіх кроків для створення та використання бази даних `permission_db` з єдиною таблицею `permission`. Також наведено Java-код, що демонструє підключення до БД та роботу з таблицею через DAO (Data Access Object) патерн.
-
----
 ## 1. DatabaseConnection.java
 
 ```java
@@ -13,17 +8,17 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 
 public class DatabaseConnection {
-    // URL підключення до MySQL для permission_db
-    private static final String URL = "jdbc:mysql://localhost:3306/permission_db?useSSL=false&serverTimezone=UTC";
+    private static final String URL = "jdbc:mysql://localhost:3306/role_db?useSSL=false&serverTimezone=UTC";
     private static final String USER = "root";
-    private static final String PASSWORD = "password";
+    private static final String PASSWORD = "your_password_here";
 
+    // єдине статичне з'єднання, яке кешується
     private static Connection connection;
 
     private DatabaseConnection() { }
 
     /**
-     * Повертає єдине з’єднання JDBC до permission_db.
+     * Повертає єдине з’єднання JDBC.
      * Якщо з’єднання ще не створене або закрите — створює нове.
      */
     public static Connection getConnection() throws SQLException {
@@ -36,142 +31,156 @@ public class DatabaseConnection {
 ```
 
 **Пояснення**  
-- Оновлений **URL** вказує на схему `permission_db`.  
-- Решта логіки кешування `Connection` аналогічна іншим DAO.
+- **DriverManager.getConnection(...)** — ініціює TCP-з’єднання з MySQL.  
+- Статичний `connection` гарантує reuse об’єкта замість створення нового при кожному виклику.  
+- Необхідно додати MySQL JDBC-драйвер (наприклад, `mysql-connector-java`) у classpath.
 
 ---
 
-## 2. Permission.java (модель)
+## 2. Role.java (модель)
 
 ```java
 package com.example.model;
 
-public class Permission {
-    private int id;            // зберігає значення AUTO_INCREMENT
-    private String name;       // назва дозволу
+public class Role {
+    private int id;                // зберігає значення з AUTO_INCREMENT
+    private String name;           // назва ролі
+    private String description;    // опис ролі
 
-    public Permission() { }
+    // Конструктор за замовчуванням (потрібен для ORM/серіалізації)
+    public Role() { }
 
-    public Permission(String name) {
+    // Конструктор для створення нової ролі без id
+    public Role(String name, String description) {
         this.name = name;
+        this.description = description;
     }
 
-    public Permission(int id, String name) {
+    // Конструктор для читання існуючої ролі з БД
+    public Role(int id, String name, String description) {
         this.id = id;
         this.name = name;
+        this.description = description;
     }
 
-    // Геттери і сеттери
+    // Геттери і сеттери для кожного поля
     public int getId() { return id; }
     public void setId(int id) { this.id = id; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 
     @Override
     public String toString() {
-        return "Permission{id=" + id +
+        return "Role{id=" + id +
                ", name='" + name + ''' +
+               ", description='" + description + ''' +
                '}';
     }
 }
 ```
 
 **Пояснення**  
-- POJO-клас для відображення запису таблиці `permission`.  
-- Конструктори дозволяють створювати об’єкт з/без `id`.
+- Цей POJO (Plain Old Java Object) **відображає** одну запис у таблиці `role`.  
+- Наявність різних конструкторів забезпечує зручність при створенні та читанні об’єктів.
 
 ---
 
-## 3. PermissionDAO.java (інтерфейс)
+## 3. RoleDAO.java (інтерфейс)
 
 ```java
 package com.example.dao;
 
-import com.example.model.Permission;
+import com.example.model.Role;
 import java.sql.SQLException;
 import java.util.List;
 
-public interface PermissionDAO {
-    // Додати новий дозвіл
-    void addPermission(Permission permission) throws SQLException;
-    // Отримати дозвіл за id
-    Permission getPermissionById(int id) throws SQLException;
-    // Отримати всі дозволи
-    List<Permission> getAllPermissions() throws SQLException;
-    // Оновити назву дозволу
-    void updatePermission(Permission permission) throws SQLException;
-    // Видалити дозвіл за id
-    void deletePermission(int id) throws SQLException;
+public interface RoleDAO {
+    // Додати нову роль у таблицю
+    void addRole(Role role) throws SQLException;
+    // Отримати роль за її id
+    Role getRoleById(int id) throws SQLException;
+    // Отримати всі наявні ролі
+    List<Role> getAllRoles() throws SQLException;
+    // Оновити існуючу роль (name, description)
+    void updateRole(Role role) throws SQLException;
+    // Видалити роль за id
+    void deleteRole(int id) throws SQLException;
 }
 ```
 
 **Пояснення**  
-- Інтерфейс описує CRUD-операції для таблиці `permission`.  
-- Розділяє контракти від реалізації.
+- DAO (Data Access Object) відокремлює бізнес-логіку від коду доступу до БД.  
+- Інтерфейс описує контракт: набір методів, які зобов’язана реалізувати конкретна імплементація.
 
 ---
 
-## 4. PermissionDAOImpl.java (реалізація)
+## 4. RoleDAOImpl.java (реалізація)
 
 ```java
 package com.example.dao;
 
-import com.example.model.Permission;
+import com.example.model.Role;
 import com.example.util.DatabaseConnection;
 
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
-public class PermissionDAOImpl implements PermissionDAO {
+public class RoleDAOImpl implements RoleDAO {
     private final Connection conn;
 
-    // Підключення до permission_db
-    public PermissionDAOImpl() throws SQLException {
+    // У конструкторі підключаємося до БД через DatabaseConnection
+    public RoleDAOImpl() throws SQLException {
         this.conn = DatabaseConnection.getConnection();
     }
 
     @Override
-    public void addPermission(Permission permission) throws SQLException {
-        String sql = "INSERT INTO permission (name) VALUES (?)";
+    public void addRole(Role role) throws SQLException {
+        String sql = "INSERT INTO role (name, description) VALUES (?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-            ps.setString(1, permission.getName());
+            ps.setString(1, role.getName());
+            ps.setString(2, role.getDescription());
             ps.executeUpdate();
+            // Отримуємо автоматично згенерований id
             try (ResultSet rs = ps.getGeneratedKeys()) {
                 if (rs.next()) {
-                    permission.setId(rs.getInt(1));
+                    role.setId(rs.getInt(1));
                 }
             }
         }
     }
 
     @Override
-    public Permission getPermissionById(int id) throws SQLException {
-        String sql = "SELECT * FROM permission WHERE id = ?";
+    public Role getRoleById(int id) throws SQLException {
+        String sql = "SELECT * FROM role WHERE id = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return new Permission(
+                    return new Role(
                         rs.getInt("id"),
-                        rs.getString("name")
+                        rs.getString("name"),
+                        rs.getString("description")
                     );
                 }
             }
         }
-        return null;
+        return null;  // якщо роль не знайдена
     }
 
     @Override
-    public List<Permission> getAllPermissions() throws SQLException {
-        List<Permission> list = new ArrayList<>();
-        String sql = "SELECT * FROM permission";
+    public List<Role> getAllRoles() throws SQLException {
+        List<Role> list = new ArrayList<>();
+        String sql = "SELECT * FROM role";
         try (Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
-                list.add(new Permission(
+                list.add(new Role(
                     rs.getInt("id"),
-                    rs.getString("name")
+                    rs.getString("name"),
+                    rs.getString("description")
                 ));
             }
         }
@@ -179,18 +188,19 @@ public class PermissionDAOImpl implements PermissionDAO {
     }
 
     @Override
-    public void updatePermission(Permission permission) throws SQLException {
-        String sql = "UPDATE permission SET name = ? WHERE id = ?";
+    public void updateRole(Role role) throws SQLException {
+        String sql = "UPDATE role SET name = ?, description = ? WHERE id = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, permission.getName());
-            ps.setInt(2, permission.getId());
+            ps.setString(1, role.getName());
+            ps.setString(2, role.getDescription());
+            ps.setInt(3, role.getId());
             ps.executeUpdate();
         }
     }
 
     @Override
-    public void deletePermission(int id) throws SQLException {
-        String sql = "DELETE FROM permission WHERE id = ?";
+    public void deleteRole(int id) throws SQLException {
+        String sql = "DELETE FROM role WHERE id = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, id);
             ps.executeUpdate();
@@ -200,8 +210,9 @@ public class PermissionDAOImpl implements PermissionDAO {
 ```
 
 **Пояснення**  
-- Використовуються `PreparedStatement` та `RETURN_GENERATED_KEYS`.  
-- Методи `getPermissionById` і `getAllPermissions` повертають об’єкти моделі.
+- Кожен метод використовує **PreparedStatement** для захисту від SQL-ін’єкцій.  
+- `RETURN_GENERATED_KEYS` дозволяє отримати `id` новоствореного запису.  
+- Усі ресурси (Statement, ResultSet) закриваються автоматично через try-with-resources.
 
 ---
 
@@ -210,9 +221,9 @@ public class PermissionDAOImpl implements PermissionDAO {
 ```java
 package com.example;
 
-import com.example.dao.PermissionDAO;
-import com.example.dao.PermissionDAOImpl;
-import com.example.model.Permission;
+import com.example.dao.RoleDAO;
+import com.example.dao.RoleDAOImpl;
+import com.example.model.Role;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -220,27 +231,27 @@ import java.util.List;
 public class Main {
     public static void main(String[] args) {
         try {
-            PermissionDAO permDao = new PermissionDAOImpl();
+            RoleDAO roleDao = new RoleDAOImpl();
 
-            
-            Permission perm = new Permission("view_media_request");
-            permDao.addPermission(perm);
-            System.out.println("Додано дозвіл: " + perm);
+            // 1) Додаємо нову роль
+            Role admin = new Role("Admin", "Адміністратор системи");
+            roleDao.addRole(admin);
+            System.out.println("Додано роль: " + admin);
 
-            
-            List<Permission> perms = permDao.getAllPermissions();
-            System.out.println("Всі дозволи:");
-            perms.forEach(System.out::println);
+            // 2) Виводимо всі ролі
+            List<Role> roles = roleDao.getAllRoles();
+            System.out.println("Всі ролі:");
+            roles.forEach(System.out::println);
 
-            
-            perm.setName("edit_media_request");
-            permDao.updatePermission(perm);
-            System.out.println("Після оновлення: " + permDao.getPermissionById(perm.getId()));
+            // 3) Оновлюємо опис ролі
+            admin.setDescription("Головний адміністратор");
+            roleDao.updateRole(admin);
+            System.out.println("Після оновлення: " + roleDao.getRoleById(admin.getId()));
 
-            
-            permDao.deletePermission(perm.getId());
+            // 4) Видаляємо роль
+            roleDao.deleteRole(admin.getId());
             System.out.println("Після видалення залишились:");
-            permDao.getAllPermissions().forEach(System.out::println);
+            roleDao.getAllRoles().forEach(System.out::println);
 
         } catch (SQLException e) {
             e.printStackTrace();
@@ -250,7 +261,10 @@ public class Main {
 ```
 
 **Пояснення**  
-- Аналогічний workflow: **add** → **get all** → **update** → **get by id** → **delete** → **get all**.
+1. **Ініціалізація DAO**: через конструктор відбувається підключення до БД.  
+2. **addRole**: створення нового запису, отримання `id`.  
+3. **getAllRoles**: читання й друк поточного стану таблиці.  
+4. **updateRole**: модифікація полів запису.  
+5. **deleteRole**: видалення запису за `id`.
 
 ---
-
